@@ -81,11 +81,24 @@ class Detection:
     box: Tuple[int, int, int, int]
 
 
-MODEL_URLS = {
+MODEL_SPECS = {
     "mobilenet_ssd": {
-        "prototxt": "https://raw.githubusercontent.com/chuanqi305/MobileNet-SSD/develop/MobileNetSSD_deploy.prototxt",
-        "weights": "https://github.com/chuanqi305/MobileNet-SSD/raw/develop/MobileNetSSD_deploy.caffemodel",
-    }
+        "name": "MobileNet SSD (VOC)",
+        "description": "Modelo ligero en Caffe entrenado sobre VOC 20 clases.",
+        "prototxt_urls": [
+            # Copia mantenida por OpenCV; URL estable.
+            "https://raw.githubusercontent.com/opencv/opencv_extra/4.x/testdata/dnn/MobileNetSSD_deploy.prototxt",
+            # Copia de respaldo del repositorio original.
+            "https://raw.githubusercontent.com/chuanqi305/MobileNet-SSD/master/MobileNetSSD_deploy.prototxt",
+        ],
+        "weights_urls": [
+            # Pesos originales liberados por los autores.
+            "https://github.com/chuanqi305/MobileNet-SSD/raw/master/MobileNetSSD_deploy.caffemodel",
+            # Espejo alternativo en el dataset público de OpenCV.
+            "https://raw.githubusercontent.com/opencv/opencv_extra/4.x/testdata/dnn/MobileNetSSD_deploy.caffemodel",
+        ],
+        "labels": MODEL_LABELS,
+    },
 }
 
 MODEL_LABELS = [
@@ -158,26 +171,36 @@ class ObjectDetector:
         self.model_dir = model_dir or Path("models")
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.net: cv2.dnn_Net | None = None
+        self.labels: List[str] = MODEL_LABELS
 
-    def _download_file(self, url: str, destination: Path) -> None:
-        """Descarga un archivo con manejo básico de errores."""
-        response = requests.get(url, stream=True, timeout=30)
-        response.raise_for_status()
-        total = int(response.headers.get("content-length", 0))
-        downloaded = 0
-        with open(destination, "wb") as file:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    file.write(chunk)
-                    downloaded += len(chunk)
-                    if total:
-                        progress = downloaded * 100 / total
-                        print(f"Descargando {destination.name}: {progress:.2f}%", end="\r")
-        print()
+    def _download_file(self, urls: List[str], destination: Path) -> None:
+        """Descarga un archivo intentando múltiples URLs como respaldo."""
+        errors: list[str] = []
+        for url in urls:
+            try:
+                response = requests.get(url, stream=True, timeout=30)
+                response.raise_for_status()
+                total = int(response.headers.get("content-length", 0))
+                downloaded = 0
+                with open(destination, "wb") as file:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            file.write(chunk)
+                            downloaded += len(chunk)
+                            if total:
+                                progress = downloaded * 100 / total
+                                print(f"Descargando {destination.name}: {progress:.2f}% desde {url}", end="\r")
+                print()
+                return
+            except requests.RequestException as error:
+                errors.append(f"{url} -> {error}")
+                continue
+
+        raise ConnectionError("; ".join(errors))
 
     def ensure_model(self) -> None:
         """Verifica y descarga el modelo seleccionado si es necesario."""
-        config = MODEL_URLS.get(self.model_name)
+        config = MODEL_SPECS.get(self.model_name)
         if not config:
             raise ValueError(f"Modelo {self.model_name} no soportado.")
 
@@ -186,19 +209,20 @@ class ObjectDetector:
 
         if not prototxt_path.exists():
             try:
-                self._download_file(config["prototxt"], prototxt_path)
-            except requests.RequestException as error:
+                self._download_file(config["prototxt_urls"], prototxt_path)
+            except ConnectionError as error:
                 raise ConnectionError(f"Error descargando prototxt: {error}") from error
 
         if not weights_path.exists():
             try:
-                self._download_file(config["weights"], weights_path)
-            except requests.RequestException as error:
+                self._download_file(config["weights_urls"], weights_path)
+            except ConnectionError as error:
                 raise ConnectionError(f"Error descargando pesos: {error}") from error
 
         self.net = cv2.dnn.readNetFromCaffe(str(prototxt_path), str(weights_path))
         self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
         self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        self.labels = config.get("labels", MODEL_LABELS)
 
     def detect(self, frame: np.ndarray, confidence_threshold: float = 0.4) -> List[Detection]:
         """Ejecuta detección sobre un frame y devuelve resultados."""
@@ -218,9 +242,11 @@ class ObjectDetector:
             class_id = int(detections[0, 0, i, 1])
             box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
             start_x, start_y, end_x, end_y = box.astype("int")
+            label_list = self.labels
+            label_value = label_list[class_id] if class_id < len(label_list) else str(class_id)
             results.append(
                 Detection(
-                    label=MODEL_LABELS[class_id] if class_id < len(MODEL_LABELS) else str(class_id),
+                    label=label_value,
                     confidence=confidence,
                     box=(start_x, start_y, end_x, end_y),
                 )
@@ -245,6 +271,7 @@ class ApplicationUI:
         self.detector = ObjectDetector()
         self.video_running = False
         self.frame_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=2)
+        self.available_models = list(MODEL_SPECS.keys())
 
         self._build_layout()
 
@@ -271,9 +298,22 @@ class ApplicationUI:
         model_label = tk.Label(control_frame, text="Modelo:", bg="#1e1e1e", fg="#f0f0f0")
         model_label.grid(row=0, column=2, padx=5)
 
-        self.model_var = tk.StringVar(value="mobilenet_ssd")
-        self.model_selector = ttk.OptionMenu(control_frame, self.model_var, "mobilenet_ssd", "mobilenet_ssd")
+        self.model_var = tk.StringVar(value=self.available_models[0])
+        self.model_selector = ttk.OptionMenu(control_frame, self.model_var, self.available_models[0], *self.available_models)
         self.model_selector.grid(row=0, column=3, padx=5)
+        self.model_var.trace_add("write", lambda *_: self._on_model_change())
+
+        model_info = self._describe_model(self.model_var.get())
+        self.model_info_label = tk.Label(
+            self.root,
+            text=model_info,
+            bg="#1e1e1e",
+            fg="#cccccc",
+            font=("Segoe UI", 9),
+            wraplength=820,
+            justify=tk.LEFT,
+        )
+        self.model_info_label.pack(pady=(0, 8))
 
         self.status_var = tk.StringVar(value="Modelo listo")
         status_label = tk.Label(self.root, textvariable=self.status_var, bg="#1e1e1e", fg="#a0e7a0")
@@ -290,6 +330,20 @@ class ApplicationUI:
 
         self.log_text = tk.Text(log_frame, height=8, state=tk.DISABLED, bg="#121212", fg="#d0d0d0")
         self.log_text.pack(fill=tk.BOTH, expand=True)
+
+    def _describe_model(self, model_key: str) -> str:
+        """Devuelve un texto descriptivo del modelo seleccionado."""
+        spec = MODEL_SPECS.get(model_key)
+        if not spec:
+            return "Modelo no reconocido."
+        primary_source = spec["weights_urls"][0]
+        return f"Modelo activo: {spec['name']} · {spec['description']} · Fuente principal: {primary_source}"
+
+    def _on_model_change(self) -> None:
+        """Actualiza la descripción visible cuando el usuario elige otro modelo."""
+        selected = self.model_var.get()
+        self.model_info_label.configure(text=self._describe_model(selected))
+        self.log(f"Modelo seleccionado: {selected}")
 
     def log(self, message: str) -> None:
         """Escribe un mensaje en el panel de logs."""
@@ -312,6 +366,7 @@ class ApplicationUI:
             return
 
         self.detector.model_name = self.model_var.get()
+        self.log(self._describe_model(self.detector.model_name))
         try:
             self.detector.ensure_model()
         except ConnectionError as error:
