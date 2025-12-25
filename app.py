@@ -81,26 +81,6 @@ class Detection:
     box: Tuple[int, int, int, int]
 
 
-MODEL_SPECS = {
-    "mobilenet_ssd": {
-        "name": "MobileNet SSD (VOC)",
-        "description": "Modelo ligero en Caffe entrenado sobre VOC 20 clases.",
-        "prototxt_urls": [
-            # Copia mantenida por OpenCV; URL estable.
-            "https://raw.githubusercontent.com/opencv/opencv_extra/4.x/testdata/dnn/MobileNetSSD_deploy.prototxt",
-            # Copia de respaldo del repositorio original.
-            "https://raw.githubusercontent.com/chuanqi305/MobileNet-SSD/master/MobileNetSSD_deploy.prototxt",
-        ],
-        "weights_urls": [
-            # Pesos originales liberados por los autores.
-            "https://github.com/chuanqi305/MobileNet-SSD/raw/master/MobileNetSSD_deploy.caffemodel",
-            # Espejo alternativo en el dataset público de OpenCV.
-            "https://raw.githubusercontent.com/opencv/opencv_extra/4.x/testdata/dnn/MobileNetSSD_deploy.caffemodel",
-        ],
-        "labels": MODEL_LABELS,
-    },
-}
-
 MODEL_LABELS = [
     "background",
     "aeroplane",
@@ -124,6 +104,27 @@ MODEL_LABELS = [
     "train",
     "tvmonitor",
 ]
+
+
+MODEL_SPECS = {
+    "mobilenet_ssd": {
+        "name": "MobileNet SSD (VOC)",
+        "description": "Modelo ligero en Caffe entrenado sobre VOC 20 clases.",
+        "prototxt_urls": [
+            # Copia mantenida por OpenCV; URL estable.
+            "https://raw.githubusercontent.com/opencv/opencv_extra/4.x/testdata/dnn/MobileNetSSD_deploy.prototxt",
+            # Copia de respaldo del repositorio original.
+            "https://raw.githubusercontent.com/chuanqi305/MobileNet-SSD/master/MobileNetSSD_deploy.prototxt",
+        ],
+        "weights_urls": [
+            # Pesos originales liberados por los autores.
+            "https://github.com/chuanqi305/MobileNet-SSD/raw/master/MobileNetSSD_deploy.caffemodel",
+            # Espejo alternativo en el dataset público de OpenCV.
+            "https://raw.githubusercontent.com/opencv/opencv_extra/4.x/testdata/dnn/MobileNetSSD_deploy.caffemodel",
+        ],
+        "labels": MODEL_LABELS,
+    },
+}
 
 
 # ---------------------------
